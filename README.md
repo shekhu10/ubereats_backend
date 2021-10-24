@@ -308,3 +308,147 @@ bootstrap();
 
 ```
 So, in dtos we are going to use IsString(), IsBoolean() decorators and many more
+
+
+--------------------------------- Section 2 -------------------------------------------------------------------------
+
+
+
+To talk to our db we can write SQL directly, or we can use type ORM. We can also test our interaction with our DB with TypeORM. TypeORM works on node js and many others. It also works on frontend.
+Type ORM supports many DB's (in documentation, in connection-options).
+
+We are going to use it with postgres. so install postgresapp.com (MAC) and then install postico (MAC) or pgAdmin4(windows). postico is to do queries on posgres. Now create your database from postico.
+Now in postico, open nuber-eats-backend-db db. and run \du; this gives all usernames. and username must be here. 
+Then run ALTER USER shekharbhardwaj WITH PASSWORD '12345'; // this is important because we are going to connect to our user later.
+
+
+Now, we have setup our DB, we are going to connect to our DB using nestJS. (we can also use sequelize(it is something like typeORM), or mongoose (for mongo DB)). typeorm is natively made in typescript and sequelize is natively made in javascript. sequelize only works on nodejs and typeORM is used on many platform.
+So, now run
+`npm install --save @nestjs/typeorm typeorm pg` (for postgres, if we want for mysql, we use mysql in place of pg)
+
+TypeOrmModule is to be added in app.module. TypeOrmModule is imported from @nestjs/typeorm
+
+Now typeORM module is put in imports of app.module. and use forroot() and here we put connection object. (connection object is used to connect to our DB, things like type, username, password).
+these options have values like
+type: 'postgres',
+host: 'localhost',
+port: 5432,
+username: 'shekharbhardwaj',
+password: '12345',
+database: 'nuber-eats-backend-db',
+synchronize: true,
+logging: true
+
+Note: password is not required when connecting via localhost. 
+username must be the username which is found in \du in postico. 
+port should be number and it is found in server settings. 
+database must be created before adding these lines as we just connect to db and not create it here. 
+synchronize means to run everything and sync it with DB, we do want it while developing but we do not want it while in production. 
+logging to give logs in our server.
+
+```
+TypeOrmModule.forRoot({
+          type: 'postgres',
+          host: 'localhost',
+          port: 5432,
+          username: 'shekharbhardwaj',
+          password: '12345',
+          database: 'nuber-eats-backend-db',
+          synchronize: true,
+          logging: true
+
+      }),
+```
+
+
+Now we need to put these options in a env file so that we can use it based on environment like test, dev, or prod.
+To do this we use ("dotenv") but we do it nestjs way,
+i.e. configuration module (from documentation), it runs on top of dotenv.
+So, add configmodule in app.module and use forroot().
+But to use ConfigModule we need to install dependency as `npm i --save @nestjs/config`
+
+Now, on top of typeOrmModule, we are also going to use config module and forRoot()
+we are going to provide some options to it.
+options - isGlobal: true,   this means that we are going to use this configuration module from everywhere in our application.
+envFilePath:  we are going to use ternary operator to give different env files based on environment.
+
+Eg-   if we use npm run start, I want it to use prod env file,
+if we use npm run start:dev, I want it to use dev env file
+
+
+To set an enviromnent we are going to use `npm i cross-env`
+now edit package.json
+in start:dev
+we do -> "cross-env NODE_ENV=dev nest start --watch" in place of nest start --watch
+now in app.module in configModule, in envFilePath, we can use
+process.env.NODE_ENV === 'dev' ? '.env.dev' : '.env.prod'
+There is 1 more option, ignoreEnvFile. this will be true if we deploy on prod
+so process.env.NODE_ENV === 'prod' ? true: false
+
+
+So, now transfer all options (ONLY DB CONNECTION) of typeOrm module to dev env. And use process.env.DB_HOST (//ly others).
+Everything that comes from env, it is in the form of string and port must be number so add a '+' in front of it,
+NOTE: In env FILE we use format like DB_NAME=testdb
+
+Now we also want to validate the values that we send via env file, we do this in  the configModule options.
+In the options there is an option validationSchema.
+So, we want that our application does not start if some of arguments in connection object is missing.
+
+
+So, to validate we are going to use joi. ->  `npm i joi`
+Joi is a javascript module. javascript modules have a different import way.
+like -> import * as Joi from 'joi'; add this line in app.module.ts
+if we use import Joi from 'joi'; typescript way. then it is not imported. console.log(Joi) in undefined.
+So, validationSchema will get Joi.object({here we validate})
+like {NODE_ENV: Joi.string().valid('dev','test','prod').required(), DB_HOST: and so on}
+like    validationSchema: Joi.object({NODE_ENV: Joi.string().valid('dev','test','prod').required(), DB_HOST: and so on})
+
+This is current app.module.ts
+```
+import { Module } from '@nestjs/common';
+import { GraphQLModule } from '@nestjs/graphql';
+import {join} from 'path';
+import { RestaurantModule } from './restaurant/restaurant.module';
+import {TypeOrmModule} from "@nestjs/typeorm";
+import {ConfigModule} from "@nestjs/config";
+import * as Joi from 'joi';
+
+
+@Module({
+  imports: [
+      GraphQLModule.forRoot({
+        autoSchemaFile: true,
+      }),
+      ConfigModule.forRoot({
+          isGlobal: true,
+          envFilePath: process.env.NODE_ENV === 'dev' ? '.env.dev': '.env.test',
+          ignoreEnvFile: process.env.NODE_ENV === 'prod' ? true: false,
+          validationSchema: Joi.object({
+              NODE_ENV: Joi.string()
+                  .valid('dev','test','prod')
+                  .required(),
+              DB_HOST: Joi.string().required(),
+              DB_PORT: Joi.string().required(),
+              DB_USERNAME: Joi.string().required(),
+              DB_PASSWORD: Joi.string().required(),
+              DB_NAME: Joi.required()
+          })
+      }),
+      TypeOrmModule.forRoot({
+          type: 'postgres',
+          host: process.env.DB_HOST,
+          port: +process.env.DB_PORT,
+          username: process.env.DB_USERNAME,
+          password: process.env.DB_PASSWORD,
+          database: process.env.DB_NAME,
+          synchronize: true,
+          logging: true
+
+      }),
+      RestaurantModule,
+  ],
+  controllers: [],
+  providers: [],
+})
+export class AppModule {}
+```
