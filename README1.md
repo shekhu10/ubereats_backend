@@ -1,129 +1,6 @@
 
---------------------------------- Section 3 -------------------------------------------------------------------------
-
-Now we are connected to our DB via typeORM. So, now we need to create tables and define their schema. Note we are doing code first approach. And we do @Entity() (like ObjectType)decorator to do this. and @Column() is used in place of @Field() and for primary key we use @PrimaryGeneratedColumn() decorator. there decorators are imported from type orm.
-So, we are going to use these decorators in the same entities file.
-This is not ging to work because we have created the columns of the table but we have not told typeorm that from where it must take the schema.
-So, in TypeOrm module.forroot in app.module. we must add entities: [<entity class name>]
-
-Now how to save data and get data from DB ? Now to interact with DB we are going to use Repository.
-there are 2 ways to interact with DB - active mapper and data mapper. Active Mapper is used for small applications.
-and we are going to use data mapper. (this is from nest js documentation). (datamapper helps maintaiblity)
-with data mapper we first have to import repository and this repository is incharge of to interact with DB.
-nest js can automatically can inject repository on classes.
-
-So, now we need to interact with our DB and we need to import Repository in the module. So, we choose Restaurant module (not app.module) because we are going to interact with our restaurant DB in restaurant service and resolvers.
-Repository is imported as TypeOrmModule.forfeature([Restaurant]), this restaurant is the entity class.
-
-Now import restaurantservice in our restaurant resolver and the funciton in restaurant resolver is going to return the function of resturant service.
-To use restaurant service in restaurant resolver we need to import restaurant service in restaurant resolver.
-constructor(private readonly restaurantService: RestaurantService){}
-restaurantService must be in providers of restaurant module to be able to inject here in resolver.
-
-To use TypeOrm repository in restaurant service we need to inject restaurant repository in the restaurant service.
-constructor(@InjectRepository(Restaurant) private readonly restaurants: Repository<Restaurant> ){}
-now we can use this.restaurants.(here we can access all function of the repository). {Restaurant is entity}
-All the functions of the repository are async function, so we need to return promise in the function that uses the DB.
-
-
-Now the task is to create a restaurant.
-
-we are going to create this function in restaurant service
-createRestaurant(@Args() create: createRestaurant): boolean {
-const newRestaurant = new Restaurant();
-newRestaurant.name = createRestaurantDTO.name;
-newRestaurant.value = createRestaurantDTO.value;
-and then save this newrestaurant into DB.
-}
-this method sucks as we don't want to do this for every property
-
-
-    TypeORM has a method create() and this creates a new instance
-    So, we can do something like - const newRestaurant = this.<name of repository>.create({name:createRestaurantDTO.name, and so on})
-    But because we know that createRestaurantDTO is same as Restaurant (because we made it), we can do like
-        const newRestaurant = this.<name of repository>.create(createRestaurantDTO_param_passed_from_resolver);
-        So this not currently on DB, so now we need to save this on DB
-        return this.restaurants.save(newRestaurant);
-    Here createRestaurantDTO will only come if we ask for it as 
-            createRestaurant(@Args() createRestaurantDTO: createRestaurantDTO): return_type {} // in resolver
-    because we need to ask every argument before using it.
-
-
-Now we may have a possibility that our createRestaurantDTO is now synced up with entity.
-Eg - we make a new field alpha in entity but we forgot to make alpha in createrestaurantDTO.
-So, the current problem is that DTO is not synced with entity.
-
-      So, we can either fix this by copy pasting in createRestaurantDTO. 
-      The other way is to, something like restaurant entity is going to generate graphQl type (already does this, as we use object type in entites), our DB table (already does this as we used entity decorator) and also our DTO's (we need to do this).
-      So to do this we are going to use mapped types.
-          There are 4 mapped types -> partial (it makes all fields are optional), pick(it constructs a new class by selecting some fields), omit, intersection
-      So, in DTO;s we are going to use something like PartialType or Something else
-      like -
-            @InputType()
-            export class restaurantDTO extends PicKType(Restaurant, ['email']) {}
-      we are going to use OmitType.
-      Note: this mapped types use InputType. So, we need to have change as per the input type.
-      So, in resolver in our createRestaurant function in @Args() we do @Args('input') and change out dto as inputType()
-      This is also having an error as the entity that mapped types extend must also be inputType, but in our case it is Object type. So we either convert it to inputtype (and do many more changes) or we convert it to abstract input type as @InputType({isAbstract: true})
-      we can also give optional values also. For dto @optional(), for DB @Column({default: true(case of boolean)}), for graphQL. @Field(() => Boolean, {defaultValue: true OR nullable: true}). if we use nullable we won't see default in docs of graphql but it will be default, but in canse of defaultValue we see default value in graphQl docs.
-
-
-Now make Update a restaurant mutation
-we need to create a differentDTO for update. and we will use partial type.
-we are going to use partial type on createRestaurant and not on restaurant because Id has to be required.
-So, if i do partial type of restaurant then even id will be partial
-
-Now the problem is that we need to send the id to our resolver to get which row to update. So, we can solve it in 2 ways.
-NOTE: If we are using inputtype then our arguments has to have a name like @Args('input') not necessary 'input' it can be anything.
-If we are using argsType then @Args() (must be empty)
-1st)
-async update(
-@Args('id') id: number,
-@Args('data') data: UpdateRestaurantDTO
-){return something}
-this looks bad as we are using multiple @Args('something') here.
-mutation{
-updateRestaurant({data: {name: "as", value: "rttfd"}, id: 2})
-}
-
-
-2nd) we are going to unify id and data.
-So, we can do like  in updateDTOs and use UpdateUserDTO for updateing,
-
-                @InputType()
-                export class UpdateUser extends PartialType(AddUser){}
-
-                @InputType()
-                export class UpdateUserDTO {
-                    @Field(() => Number)
-                    id: number;
-
-                    @Field(() => UpdateUser)
-                    data: UpdateUser;
-                }
-
-      and we use as updateRestaurant( @Args() data: UpdateUser ) in our resolver
-this results in data transfer via graphQL page as
-
-Now lets create a function update restaurant in service. So, we are going to use update method of repository.
-This function does not check that row is present or not, it just updates it. if present -> then updated and if not present -> then added.
-
-update takes param to find and then data.
-like ->
-update({id, data}: updaterestaurantDto) {
-return this.restaurant.update(id, {...data})
-}
-this is going to return a promise.
-
-If we want optional types and columns, we can use nullable or default value in field type and IsOptional() and @Column({ default: true }) in entities.
-as
-Field(type => String, { defaultValue: 'abc' }) or @Field(type => Boolean, { nullable: true })
-
-
-
 
 --------------------------------- Section 4 -------------------------------------------------------------------------
-
 
 ## User Entity (Model):
 -- id
@@ -174,8 +51,6 @@ Put user repository inside the constructor of user service (Injecting repository
 in resolver ->        constructor (private readonly userService: UsersService) {}
 in service  ->        constructor( @InjectRepository(User) private readonly users: Repository<User> ) {}
 
-
-
 Now create our DTOS for createAccount mutation.
 Use ObjectType() and InputType({isAbstract: true}) in user entity.
 in use field() in coreentity and user entity.
@@ -207,13 +82,10 @@ to use in column, we are going to do as @Column('int') as enum is going to store
 
 So, we are going to use enum for this. and in @Column we are going to pass type as enum and enum as userRole.
 
-
-
 Now, to create a account -
 // check if it is new user
 // create a user and hash the password
 // return ok or error
-
 
 So in resolver in try and catch block, we can do like this,
 const {ok, error} = await this.userservice.createaccount(accountInputdata);
@@ -238,13 +110,8 @@ In service
                 }
             }
 
-
       we can also use array to return here, as Promise<[boolean, string?]>
       So, we have to accept it as array in resolver.
-
-
-
-
 
 Now, our target is to hash the password.
 To hash the password we are going to use listners and subscribers.
@@ -259,7 +126,6 @@ So, in try and catch
 this.password = await bcrypt.hash(this.password, 10);
 will work as we have used userRepository.create in createAccount. and create only creates account, so this.password will work.
 
-
 Now it's time to login. So, create in resolver, service, input DTOS, outputDTOS.
 Note that outputDTOS, will be having same values as in createAccountOutputDTOS, so put this DTO in common/dtos/core.dto.ts folder.
 And let's name the class be -> MutationOutput
@@ -272,7 +138,6 @@ Note our outputDTOS are object types and our inputDTOS are inputTypes.
 LoginOutputDTO are going to also return token (string) apart from ok and error.
 
 Now, in LoginInputDTO we only need email and password, so we are going to use picktype on user and select email and password.
-
 Now, we also need to add validation in our entities. So, do this in our entites folder in common (if needed) and in User.entity. we use decorators like @IsString() and these are provided in class-validators.
 
 Now let's proceed to create Login login in resolver and service.
@@ -295,9 +160,7 @@ So, in resolver in try and catch block, we are going to call login function in s
             }
         }
 
-
 And in service we are going to do like,
-
 
         async login({email, password}: loginInputDTOS): Promise<{ok: boolean, error?: string, token?: string}> {
         // find the user with this email
@@ -333,7 +196,6 @@ And in service we are going to do like,
     }
 
 Note we create checkpassword function in user entity as
-
 
     async checkPassword(aPassword: string): Promise<boolean> {
         try {
@@ -423,7 +285,6 @@ remove jwtservice and providers from jwt.module and do this -
                 }
             }
         }
-
             
         Now modify our JwtService.
         For testing let's create a function hello in jwt.service and call it user.service.
@@ -467,8 +328,6 @@ static forRoot(options: JwtModuleOptions): DynamicModule {...}
                     useValue: options
                 }, 
                 JwtService]
-        
-        
 
         Now, we are going to inject BANANA in the jwt.service,
         How are we going to inject it ?
@@ -518,8 +377,6 @@ Middle ware are same as in express ,that they take the request and do something 
             next();
         }
 
-
-
     How to install a middle ware ?
         we can install it on 1 module or we can install it for all the modules (app.module). we are going to do for all modules.
 
@@ -551,7 +408,6 @@ Middle ware are same as in express ,that they take the request and do something 
 
     There is also a function .exclude({}) in place for forRoutes. same params as forRoutes. This is going to exclude routes from those paths and methods.
 
-
 INPLACE OF DOING IT TO APP.MODULE, we can also do this in main.ts as
 app.use(JwtMiddleware); in our bootstrap function. // it works only when we create middle ware in function.
 So, this is kind of difference, if we do it here we are going to use it everywhere, but if we do it in app.module we have more control on where to use middleware and where not to.
@@ -572,7 +428,6 @@ console.log(req.headers['x-jwt']);
 }
 next();
 }
-
 
 Now, we need to verify the token, so look for this jsonwebtoken on how to verify the token.
 So, we saw 2 functions
@@ -661,7 +516,6 @@ context: ({req}) => ({potato: true})
                 }
 
 Now, we can see that our user is in the context.
-
 So, now in theory, we can do something like, in <here> 3-4 lines above,
 
         if(!context.user){
@@ -685,7 +539,6 @@ So, now in theory, we can do something like, in <here> 3-4 lines above,
         export class AuthGuard implements CanActivate { } // CanActivate is like a function that if returns true then the request will continue, and if returns false that request will stop. CanActivate interface has only 1 function canActivate and its parameter is ExecutionContext which basically provides access to Context.
         This context is not the context of GraphQL but the context of pipeline (written in comments in the interface CanActivate), basically it is request object. So, now -- 
 
-
             @Injectable()
         export class AuthGuard implements CanActivate { 
             canActivate(context: ExecutionContext){
@@ -694,11 +547,8 @@ So, now in theory, we can do something like, in <here> 3-4 lines above,
             }
         }
         To use this guard we are going to do this way --
-
-
-        @Query(() => boolean)
-        @UseGuards(AuthGuard)
-
+           @Query(() => boolean)
+           @UseGuards(AuthGuard)
 
     Note: context in canActivate is in HTTP, we need to convert it to graphQl conext.
     we do, it as 
@@ -709,16 +559,13 @@ So, now in theory, we can do something like, in <here> 3-4 lines above,
         return false;
     }
 
-
     Now, we are going to make our decorator so that we can get our user at <here>
 
     @Query(() => boolean)
     me(<we want user here>) {}
-
     Here, what we want is to know who is the one who is asking for the query, So, for this we need to create our own decorator. This decorator will behave somewhat like @Args().
 
 So, create a file auth-user.decorator.ts in auth.
-
     Decorator are easy to create.
 
     export const <nameOfDecorator> = createParamDecorator(<factoryFunction>)   // it takes a factory function which takes
@@ -742,16 +589,12 @@ return user;
                             console.log(authUser);
                             return authUser;
                         }
-
             Now, we get our user when we call me, and note: it works only when token is passed in http headers.
 
     This whole thing can be done using passport easily, doing this way is important as we want to get verificatiion mails in our next section.
     we learnt dynamic module, providers, dependency injection, middleware, guards, decorators, context just for authentication.
 
-
 So, flow of request is, 1st token is sent on the HTTP headers, then request goes to the middleware, middle ware decrypts the token and verifies it and adds the user to the req object. Than that req object gets put inside graphql context, then our guard finds the graphQl context and looks for the user on the graphQl context if the user is present then it returns true and let's request to pass to resolvers. Now when the request is authorized, we need to get the user object so we create a decorator and decorator looks inside the same graphQl context and return the user.
-
-
 
 so, we are going to create 1 query and 1 mutation.
 let's go for query 1st. query is profile -> because some times we just need to get the profile of the user.
@@ -780,7 +623,6 @@ This is because for some reason @ObjectTpye() went missing from core.entites. So
 
 (at this point before adding ObjectType decorator on core.entites, I also saw query logs running in the terminal. Like we are running query again and again after 4-5 sec after.)
 
-
 So, now we can do that
 {
 userProfile(userId: 2) {
@@ -790,13 +632,10 @@ email
 }
 
 Now this do not returns error when we do send wrong id, so we need to take core of that.
-
 So, to resolve this we are going to make userProfileOutputDTOS. So, we are going to return ok, error, data
 So, we are going to extend it from mutationOutputDTOS. mutationOutputDTOS already contains error and ok. And now we need 1 more field as user.
 
-
         in user-profile.dtos.ts
-
 
                             @ObjectType()
                             export class UserProfileOutputDTO extends CoreOutput {
@@ -806,8 +645,7 @@ So, we are going to extend it from mutationOutputDTOS. mutationOutputDTOS alread
 
         So, now user.resolver should return UserProfileOutputDTO.
 
-        we update as --- 
-
+        we update as ---
                             @UseGuards(AuthGuard)
                             @Query(() => UserProfileOutputDTO)
                             async userProfile(@Args() UserProfileInput: UserProfileInput): Promise<UserProfileOutputDTO> {
@@ -831,7 +669,6 @@ So, we are going to extend it from mutationOutputDTOS. mutationOutputDTOS alread
 
             So, now we do query as
 
-
                             {
                                 userProfile(userId: 2) {
                                     ok
@@ -841,13 +678,11 @@ So, we are going to extend it from mutationOutputDTOS. mutationOutputDTOS alread
                             }
 
 Now, renaming mutationOutput to CoreOutput // because it looks cooler.
-
 Now it's time to edit or profile
 So, create a mutation for it and we need to have DTO's for it as well.
 So, create a file edit-profile.dto.ts
 
         here, we create a class editProfileOutputDTO that extends CoreOutput {} and we make it as ObjectType()
-
     Now, create a mutation in users.resolver as editProfile. Edit profile will need @authUser{} and editProfileInputDTO
 
     Now crete a class editProfileInputDTO extends PickType(User, ['email', 'password'])
@@ -856,7 +691,6 @@ So, create a file edit-profile.dto.ts
         And we are going to use @inputType() decorator for editProfileInputDTO class.
 
         Now, in resolver,
-
                                 @UseGuards(AuthGuard)
                                 @Mutation(() => editProfileOutputDTO)
                                 async editProfile(
@@ -867,14 +701,11 @@ So, create a file edit-profile.dto.ts
                                 }
 
         Now, go to service,
-
                          async editProfile(userId: number, { email, password }: editProfileInputDTO) {
                             return this.users.update( { id: userId }, {email, password} );
                          }
 
-
         Now, again to resolver,
-
                             @UseGuards(AuthGuard)
                             @Mutation(() => editProfileOutputDTO)
                             async editProfile(
@@ -926,7 +757,6 @@ So, create a file edit-profile.dto.ts
             The problem is because are calling update from users repository. Update is a very fast and efficient query which do not actually checks that the entry is present in DB or not. So, this means that we are not actually not updating the entry, we are just sending the query to the database and nothing else. And this is not going to trigger beforeinsert. As beforeinsert when we update the entry. Currently, we are just sending the query to the DB and hoping that the query works. If we call update, then hooks are not called.
          
          So, instead we are going to call 'save' method. Save -> saves all the given entities in the DB, if the entities are not present in DB then it will create them otherwise it will update them
-
          therefore,
 
                 async editProfile(userId: number, {email, password}: editProfileInputDTO): Promise<User> {
@@ -956,10 +786,6 @@ return this.users.save(user);
 }
 
 
-
-
-
-
 -------------------------------- Section 6 -------------------------------------------------------------------------
 Now, we want to do email verification. We are going to understand database relationships.
 
@@ -978,9 +804,7 @@ And in this class we are going to have 1 addition field code. Now this code will
 Now, while defining relationships we need to have a decorator @JoinColumn() and @OneToOne() that is something like foreign key. JoinColumn() is required and it must be set on 1 side of relationship. (typeorm documentation).
 
 Eg- if I want to have a user and from the user I want to get the verifiction that the user had then I have to put @JoinColumn() on the User entity. If I want to get the verification and from the verification I want to access the user then I have to put @JoinColumn() on the verification entity.
-
 In our case we are going to access user from them verification side, So, we want joinColumn on the verification side.
-
 
 Like ---
 import { Field, InputType, ObjectType } from "@nestjs/graphql";
@@ -993,7 +817,6 @@ import { User } from "./user.entity";
                                 @ObjectType()
                                 @Entity()
                                 export class Verification extends CoreEntity {
-
                                     @Column()
                                     @Field(() => string)
                                     code: string;
@@ -1002,7 +825,6 @@ import { User } from "./user.entity";
                                     @JoinColumn()
                                     user: User;
                                 }
-
 
 There is no new table in our DB, because we forgot to put verification in typeOrmModule in app.module
 We are going to add 1 more field to our User.entity.ts as boolean -> emailVerified. and by default it will be false.
@@ -1017,7 +839,6 @@ So, add it in user module imports. (in forFeature).
 Now add in users.service (inside constructor) as ---
 @InjectRepository(Verification) private readonly verify: Repository<Verification>
 Now, we have a verification repository on user.service
-
     Now, in user.service in the createAccount, after we save the user we are going to create a verifcation and saving the user in that verification. 
 
                         async CreateAccount({email, password, role}: CreateAccountInputDTO)
@@ -1041,7 +862,6 @@ Now, we have a verification repository on user.service
 Now, we will get the error as we have not created "code": string for the verification. We are going to put code in verification.entity.ts
 
 So, in class verification,
-
             @BeforeInsert()
             createCode(): void {
                 // this.code = "random code"; we can do it using uuid. other way is to convert math.random to string.
@@ -1053,8 +873,6 @@ So, in class verification,
 
 Note that, now when we createAccount a row in verification is also added.
 Now, we have to do the same thing in edit profile.
-
-
                 await this.verify.save(this.verify.create({user}));  // verify is the instace of verification from constructor in users.service
 
 Now, we have a problem that we are not not deleting any verifications, that means we are not currently verifying the emails.
@@ -1079,12 +897,8 @@ The problem that we found is that --
 @Field(() => string)
 code: string;
 in field decorator we are using small case 'string'. So, make it caps as 'String' and it works fine.
-
 Now let's test --
 In graphQL create a new user and lets see that verification is made for it or not ?
 It's working.
 Now, let's verify email as --
-
-
-
 TypeOrm does not load relationships as this is an expensive option for typeOrm. So, we have to tell this explicitely
