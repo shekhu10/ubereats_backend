@@ -992,3 +992,574 @@ UpdateRestaurant in our resolver is as--
         }
     }
 ```
+
+
+--------------------------------- Section 4 -------------------------------------------------------------------------
+
+Let's create our user Module.
+`nest g mo users`. This command is going to add usersModule in app.module imports
+
+In our app.module, I am going to delete RestaurantModule (from imports) and delete Restaurant entities (from TypeOrmModule).
+
+Go to users folder and create entities folder and inside that create users.entity.ts
+
+Now our user must have -- 
+
+## User Entity (Model):
+-- id
+-- createdAt
+-- updatedAt
+The above 3 fields are going to be common for all entities
+-- Email
+-- Password
+-- role (client | owner | delivery)
+
+
+type orm entities special columns (it has 4 columns, some of them are date)
+        -- @CreateDateColumn() -> it is a special column that automatically sets when we create an entity
+        -- @UpdateDateColumn() -> it is a special column that automatically sets when we update an entity
+        -- @DeleteDateColumn() -> it is a special column that automatically sets when we delete an entity
+        -- @VersionColumn()
+
+Also create a common module as `nest g mo common`. In this module create a folder as entites and in this create core.entity.ts
+Inside core.entity.ts put id, createdAt and updatedAt.
+
+And our user.entity.ts is going to extend this core.entity.ts
+
+
+Our core.entity.ts
+```
+import {CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn} from "typeorm";
+
+@Entity()
+export class CoreEntity {
+
+    @PrimaryGeneratedColumn()
+    id: number;
+
+    @CreateDateColumn()
+    createdAt: Date;
+
+    @UpdateDateColumn()
+    updatedAt: Date;
+
+}
+```
+
+
+Our users.entity.ts 
+```
+import {Column, Entity} from "typeorm";
+import {CoreEntity} from "../../common/entities/core.entity";
+
+type UserRole = "client" | "owner" | "delivery"
+
+@Entity()
+export class User extends CoreEntity{
+
+    @Column()
+    email: string;
+
+    @Column()
+    password: string;
+
+    @Column()
+    role: UserRole;
+}
+```
+
+Note after this we will get an error as  Query root type must be provided.
+This means that we have to create users resolver and add a query in it.
+
+So, do `nest g r users`. Note that by doing this our users resolver is added in providers of users.module.ts
+and add query in resolver.
+
+Also, create users.service.ts and don't forget that service needs a repository. So, in import of users.module.ts TypeOrmModule.forFeature([User]),
+
+So, create our users.service as 
+
+```
+import {InjectRepository} from "@nestjs/typeorm";
+import {User} from "./entities/users.entity";
+import {Repository} from "typeorm";
+import {Injectable} from "@nestjs/common";
+
+@Injectable()
+export class UsersService {
+    constructor(@InjectRepository(User) private readonly user_repository: Repository<User>) {}
+}
+```
+
+Note: We are using @Injectable() beacuse we are going to inject it in user.resolver and @InjectRepository(User) because we are going to use User repository.
+Also note that userService must be in providers of users.module.
+
+Now let's make our user for graphQl also. So, we are going to use @objectType and @field in user.entity.ts and core.entity.ts
+
+Note: we are not making core.entity as @objecttype.
+
+Now, let's start making our createAccount mutation.
+So, we need 2 dtos -- 1) CreateAccountInputDto and 2) CreateAccountOutputDto
+
+So, create a file create-account.dto.ts inside dtos inside users as...
+
+```
+import {Field, ObjectType, PickType, InputType} from "@nestjs/graphql";
+import {User} from "../entities/users.entity";
+
+@InputType()
+export class CreateAccountInputDto extends PickType(User, ['email', 'password', 'role']) {}
+
+@ObjectType()
+export class CreateAccountOutputDto {
+    @Field(type => String, {nullable: true})
+    error?: string;
+    
+    @Field(type => String, {nullable: true})
+    message?: string;
+
+    @Field(type => Boolean)
+    ok: boolean;
+    
+}
+```
+
+Note: CreateAccountOutputDto is created as objecttype because this is going to be used for output.
+for CreateAccountOutputDto, we have 2 options 1 as ArgsType and option 2 as InputType. We are going with InputType because we are going to use mapped type (pick type) for this.
+
+
+Our user is going to have these features...
+## User crud
+-- Create account -> how to hash password, verify password
+-- Log in   -> authentication, authorization, guards, middlewares, metadata, create our own decorator
+-- See Profile
+-- Edit Profile
+-- Verify Email
+-- Unit Testing
+-- E2E Testing
+
+Now lets force role in users.entity to have 3 specific values as client or delivery or owner.
+For this in user.entity.ts, we are going to create UserRole as enum instead of type.
+
+```
+enum UserRole {
+Client,
+Owner,
+Delivery
+}
+```
+
+So, in the DB we are going to store number as 0, 1 or 2
+So, on the @Column decorator of role. We are going to specify type as
+```
+@Column({type: 'enum', enum: UserRole })
+role: UserRole;
+```
+
+So, now we are done creating enum for DB. Now, our job is to create enum for graphQl.
+So,
+`registerEnumType(UserRole, {name: 'UserRole'})`
+is added in user.entity.ts as...
+
+```
+import {Column, Entity} from "typeorm";
+import {CoreEntity} from "../../common/entities/core.entity";
+import {Field, InputType, ObjectType, registerEnumType} from "@nestjs/graphql";
+
+enum UserRole { "client", "owner" , "delivery" }
+
+registerEnumType(UserRole, {name: 'UserRole'})
+
+@InputType({isAbstract: true})
+@ObjectType()
+@Entity()
+export class User extends CoreEntity{
+
+    @Column()
+    @Field(type => String)
+    email: string;
+
+    @Column()
+    @Field(type => String)
+    password: string;
+
+    @Column({type: 'enum', enum: UserRole })
+    @Field(type => UserRole)
+    role: UserRole;
+}
+```
+
+So, in graphQl, now we are having only 3 options for the UserRole. i.e We can only send one of these options for role.
+
+
+Now, create user-resolver and user service.
+Put user service inside of constructor of user resolver (Injecting class users service in resolver).
+Put user repository inside the constructor of user service (Injecting user repository in service).
+
+in resolver ->        constructor (private readonly userService: UsersService) {}
+Note that users.service needs to be injectable
+
+in service  ->        constructor( @InjectRepository(User) private readonly users: Repository<User> ) {}
+Note that Repository(user) must be in typeOrmModule.forFeature() in imports of users.module.
+
+Now create our DTOS for createAccount mutation.
+Use ObjectType() and InputType({isAbstract: true}) in user entity.
+in use field() in core.entity and user entity.
+
+make createAccount mutation in resolver
+and ask for input type dtos. as
+createAccount(@Args('input_graphQlname') nameusedhere: booleanfornow)
+
+now make 2 dtos, createAccountInputDTOS and createAccountOutputDTOS
+for inputDtos we are going to use pick type -> email password, role
+for outputDtos, we are going to make 2 fields, error: string and ok: boolean
+Remember, these DTOs are need to be decorated. createAccountInputDTOS with  InputType() and createAccountOutputDTOS with ObjectType()
+now update as
+createAccount(@Args('input_graphQlname') nameusedhere: createAccountInputDTOS): createAccountOutputDTOS {}
+
+So, for creating user we have to do 3 tasks as...
+// check that email does not exists or it is a new user
+// if it is a new user, then create a user and hash the password
+// if everything goes fine, return ok as true else return error
+And these things are to be done in user.service.ts
+
+
+Our create account in users service
+```
+async createAccount({email, password, role}: CreateAccountInputDto): Promise<{ok:boolean, error?: string, message?: string}> {
+    try {
+        const exists = await this.user_repository.findOne({email});
+        if (exists){
+            return {ok: false, error: "user is already present"};
+        }
+        const new_user = this.user_repository.create({email, password, role});
+        await this.user_repository.save(new_user);
+        return {ok: true, message: "user created"};
+    }
+    catch(e){
+        return {ok: false, error: "Couldn't create account"};
+    }
+}
+```
+
+Our create account in users.resolver
+```
+@Mutation(returns => CreateAccountOutputDto)
+    async createAccount(@Args('input') createAccountInput: CreateAccountInputDto): Promise<CreateAccountOutputDto> {
+        try {
+            const {ok, error, message} = await this.userService.createAccount(createAccountInput);
+            return {ok, error, message};
+        }
+        catch (e){
+            return {ok: false, error: e}
+        }
+    }
+```
+
+Current users.resolver is 
+```
+import {Args, Mutation, Query, Resolver} from '@nestjs/graphql';
+import {User} from "./entities/users.entity";
+import {UsersService} from "./users.service";
+import {CreateAccountInputDto, CreateAccountOutputDto} from "./dtos/create-account.dto";
+
+@Resolver(of => User)
+export class UsersResolver {
+    constructor( private readonly userService: UsersService) {}
+    @Query(returns => Boolean)
+    get(): boolean {
+        return false;
+    }
+
+    @Mutation(returns => CreateAccountOutputDto)
+    async createAccount(@Args('input') createAccountInput: CreateAccountInputDto): Promise<CreateAccountOutputDto> {
+        try {
+            const {ok, error, message} = await this.userService.createAccount(createAccountInput);
+            return {ok, error, message};
+        }
+        catch (e){
+            return {ok: false, error: e}
+        }
+    }
+}
+```
+
+current users.service is
+
+```
+import {InjectRepository} from "@nestjs/typeorm";
+import {User} from "./entities/users.entity";
+import {Repository} from "typeorm";
+import {Injectable} from "@nestjs/common";
+import {CreateAccountInputDto, CreateAccountOutputDto} from "./dtos/create-account.dto";
+
+@Injectable()
+export class UsersService {
+    constructor(@InjectRepository(User) private readonly user_repository: Repository<User>) {}
+
+    async createAccount({email, password, role}: CreateAccountInputDto): Promise<{ok:boolean, error?: string, message?: string}> {
+        try {
+            const exists = await this.user_repository.findOne({email});
+            if (exists){
+                return {ok: false, error: "user is already present"};
+            }
+            const new_user = this.user_repository.create({email, password, role});
+            await this.user_repository.save(new_user);
+            return {ok: true, message: "user created"};
+        }
+        catch(e){
+            return {ok: false, error: "Couldn't create account"};
+        }
+    }
+}
+```
+
+Note that if we want to return optional value as an object we put -> `Promise<{abc?: string, ok: boolean}>` (in case of promise) OR `abc?: string` or `def?: boolean?`
+And if we want to return values as an array but they can be optional -> `Promise<[boolean, string?]>` (in case of promise) OR `[boolean, string?]`
+And if we want to return 2 possible options like string or undefined -> `: (string | undefined)`
+Also, the way we are going to return it from service, will be the way we are going to accept it in resolver.
+eg- if we return as Promise<[boolean, string?]> then we have to accept it as array in resolver.
+
+
+Now, our target is to hash the password.
+To hash the password we are going to use listners and subscribers.
+Listners are something that is executed when something happens on your entity (in DB).
+eg of listners ->
+@AfterLoad()         ->    It is executed after we read a record from DB
+@BeforeInsert()      ->    It is executed before we create a record from DB
+@AfterInsert()       ->    It is executed after we create a record from DB
+@BeforeUpdate()      ->    It is executed before we update a record from DB
+@AfterUpdate()       ->    It is executed after we update a record from DB
+@BeforeRemove()      ->    It is executed before we delete a record from DB
+@AfterRemove()       ->    It is executed after we delete a record from DB
+
+So, to hash the password we are going to use BeforeInsert decorator. and we are creating this in user.entity in user class.
+
+```
+@BeforeInsert()
+async hashPassword(): Promise<void> {
+
+}
+```
+
+
+And to hash the password we are going to use bcrypt (it is used to do everything with hash),
+So install bcypt -> `npm i bcrypt`
+and also install types for bcrypt -> `npm i @types/bcrypt --dev-only`
+So, in users.entity
+```
+import {BeforeInsert, Column, Entity} from "typeorm";
+import {CoreEntity} from "../../common/entities/core.entity";
+import {Field, InputType, ObjectType, registerEnumType} from "@nestjs/graphql";
+import * as bcrypt from 'bcrypt';
+import {InternalServerErrorException} from "@nestjs/common";
+
+enum UserRole { "client", "owner" , "delivery" }
+registerEnumType(UserRole, {name: 'UserRole'})
+
+
+
+
+@InputType({isAbstract: true})
+@ObjectType()
+@Entity()
+export class User extends CoreEntity{
+
+   @BeforeInsert()
+   async hashPassword()
+   {
+       try {
+           this.password = await bcrypt.hash(this.password, 10);
+       }
+       catch(e){
+           console.log(e);
+           throw new InternalServerErrorException();
+       }
+   }
+
+    @Column()
+    @Field(type => String)
+    email: string;
+
+    @Column()
+    @Field(type => String)
+    password: string;
+
+    @Column({type: 'enum', enum: UserRole })
+    @Field(type => UserRole)
+    role: UserRole;
+}
+```
+So, now why that this.password will work ?
+We have used userRepository.create({user data}) in createAccount, and this function creates an instance of user from users.entity.
+So, we are going to call this function just before our save method from user repository is called.
+So, at this point our instance is created but it is not added into the DB, so, this is referring to the current instance.
+Also, as this hashpassword function is in the class of user.entity, this.password is going to refer the current password.
+
+
+
+Now it's time to login. So, create in resolver, service, login input DTOS, login outputDTOS.
+Note that login outputDTOS, will be having same values as in createAccountOutputDTOS, so put this DTO in common/dtos/core.dto.ts folder.
+And let's name the class be -> CoreoutputDto as
+```
+import {Field, ObjectType} from "@nestjs/graphql";
+
+@ObjectType()
+export class CoreoutputDto {
+    @Field(type => String, {nullable: true})
+    error?: string;
+
+    @Field(type => String, {nullable: true})
+    message?: string;
+
+    @Field(type => Boolean)
+    ok: boolean;
+}
+```
+
+and now extend this class in createAccountOutputDTOS and in login output dtos.
+Also, apart from this our login output must also return a token string.
+
+Our login.dto.ts is as...
+```
+import {Field, InputType, ObjectType, PickType} from "@nestjs/graphql";
+import {CoreoutputDto} from "../../common/dtos/output.dto";
+import {User} from "../entities/users.entity";
+
+
+@ObjectType()
+export class LoginOutputDto extends CoreoutputDto {
+    @Field(type => String)
+    token: string;
+}
+
+@InputType()
+export class LoginInputDto extends PickType(User, ['email', 'password']) {}
+```
+
+Note: we have used @ObjectType() decorator in both child class as well as parent class.
+
+Also, don't forget, if we want to add some validation we can add those validation in user.entity.ts as
+
+```
+import {BeforeInsert, Column, Entity} from "typeorm";
+import {CoreEntity} from "../../common/entities/core.entity";
+import {Field, InputType, ObjectType, registerEnumType} from "@nestjs/graphql";
+import * as bcrypt from "bcrypt";
+import {InternalServerErrorException} from "@nestjs/common";
+import {IsEmail, IsEnum, IsString} from "class-validator";
+
+enum UserRole { "client", "owner" , "delivery" }
+registerEnumType(UserRole, {name: 'UserRole'})
+
+
+@InputType({isAbstract: true})
+@ObjectType()
+@Entity()
+export class User extends CoreEntity{
+
+
+    @BeforeInsert()
+    async hashPassword(): Promise<void> {
+        try {
+            this.password = await bcrypt.hash(this.password, 10);
+        }
+        catch(e){
+            console.log(e);
+            throw new InternalServerErrorException();
+        }
+    }
+
+    @Column()
+    @Field(type => String)
+    @IsEmail()
+    email: string;
+
+    @Column()
+    @Field(type => String)
+    @IsString()
+    password: string;
+
+    @Column({type: 'enum', enum: UserRole })
+    @Field(type => UserRole)
+    @IsEnum(UserRole)
+    role: UserRole;
+}
+```
+
+Now, the task is to create a login feature.
+So, for login feature, we need to someway to verify that our password is correct or not.
+So, for this, we need to create a checkpassword function in user.entites as... (this function is to be created in the class)
+
+```
+async checkPassword(password_currently_entered_by_user: string): Promise<boolean> {
+        try{
+            const ok = await bcrypt.compare(password_currently_entered_by_user, this.password);
+            return ok;
+        }
+        catch(e){
+            console.log(e);
+            throw new InternalServerErrorException();
+        }
+    }
+```
+
+
+
+
+Now, create a login function in users resolver as...
+
+```
+ @Mutation(returns => LoginOutputDto)
+    async loginAccount(@Args('input') login: LoginInputDto ): Promise<LoginOutputDto> {
+        try {
+            const {ok, error, message, token} = await this.userService.loginAccount(login);
+            return {ok, error, message, token};
+        }
+        catch(e){
+            return {ok: false, error: e};
+        }
+    }
+```
+
+
+Now, create a login function in users service as...
+
+```
+async loginAccount({email, password}: LoginInputDto): Promise<LoginOutputDto> {
+        try{
+            const this_is_current_user = await this.user_repository.findOne({email});
+            if (!this_is_current_user) {
+                return {ok: false, message: 'user does not exist'};
+            }
+            // this means we have user.
+            const password_matched = await this_is_current_user.checkPassword(password);
+            if(!password_matched){
+                return {ok: false, error: "wrong password"};
+            }
+            return {ok: true, token: 'lalala'};
+        }
+        catch(e){
+            return {ok: false, error: e};
+        }
+    }
+```
+
+
+Now, we can test our login as...
+
+```
+mutation{
+  loginAccount(
+    input: {
+      email: "sbh@gmai.com",
+      password: "12345"
+    }
+  ){
+    ok
+    error
+    message
+    token
+  }
+}
+```
+
