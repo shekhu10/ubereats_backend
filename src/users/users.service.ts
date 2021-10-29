@@ -4,10 +4,18 @@ import {Repository} from "typeorm";
 import {Injectable} from "@nestjs/common";
 import {CreateAccountInputDto, CreateAccountOutputDto} from "./dtos/create-account.dto";
 import {LoginInputDto, LoginOutputDto} from "./dtos/login.dto";
+import * as Jwt from 'jsonwebtoken';
+import {ConfigService} from "@nestjs/config";
+import {JwtService} from "../jwt/jwt.service";
+import {EditProfileInputDto} from "./dtos/edit-profile.dto";
 
 @Injectable()
 export class UsersService {
-    constructor(@InjectRepository(User) private readonly user_repository: Repository<User>) {}
+    constructor(@InjectRepository(User) private readonly user_repository: Repository<User>,
+                private readonly config: ConfigService,
+                private readonly jwtSerice_here: JwtService
+
+    ) {}
 
     async createAccount({email, password, role}: CreateAccountInputDto): Promise<{ok:boolean, error?: string, message?: string}> {
         try {
@@ -35,11 +43,27 @@ export class UsersService {
             if(!password_matched){
                 return {ok: false, error: "wrong password"};
             }
-            return {ok: true, token: 'lalala'};
+            const token = this.jwtSerice_here.sign({id: this_is_current_user.id});
+            return {ok: true, token};
         }
         catch(e){
             return {ok: false, error: e};
         }
+    }
+
+    async findById(id: number): Promise<User> {
+        return this.user_repository.findOne({id});
+    }
+
+    async editProfile(userId: number, {email, password}: EditProfileInputDto): Promise<User> {
+        const user = await this.user_repository.findOne(userId);
+        if (email){
+            user.email = email;
+        }
+        if (password){
+            user.password = password;
+        }
+        return this.user_repository.save(user);
     }
 
 
