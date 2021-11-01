@@ -8,6 +8,7 @@ import {AuthGuard} from "../auth/auth.guard";
 import {AuthUser} from "../auth/auth-user.decorator";
 import {UserProfileInputDto, UserProfileOutputDtos} from "./dtos/user-profile.dto";
 import {EditProfileInputDto, EditProfileOutputDto} from "./dtos/edit-profile.dto";
+import {VerifyEmailInputDtos, VerifyEmailOutputDtos} from "./dtos/verify-email.dtos";
 
 @Resolver(of => User)
 export class UsersResolver {
@@ -75,6 +76,31 @@ export class UsersResolver {
             return {ok: true};
         }
         catch(e){
+            return {
+                ok: false,
+                error: e
+            }
+        }
+    }
+
+    @Mutation(returns => VerifyEmailOutputDtos)
+    async verifyEmail(@Args('input') verifyEmailInputHere: VerifyEmailInputDtos) {
+        try{
+            const ok = await this.userService.verifyEmail(verifyEmailInputHere);
+            if (ok){
+                return {
+                    ok,
+                    message: "email verified"
+                }
+            }
+            else{
+                return {
+                    ok,
+                    error: "email not verified"
+                }
+            }
+        }
+        catch (e){
             return {
                 ok: false,
                 error: e

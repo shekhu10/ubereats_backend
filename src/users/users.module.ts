@@ -6,9 +6,11 @@ import {UsersService} from "./users.service";
 import {ConfigModule} from "@nestjs/config";
 import {JwtModule} from "../jwt/jwt.module";
 import {AuthModule} from "../auth/auth.module";
+import {Verification} from "./entities/verification.entity";
+import {MailModule} from "../mail/mail.module";
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User]), ConfigModule, JwtModule, AuthModule ],
+  imports: [TypeOrmModule.forFeature([User, Verification]), ConfigModule, JwtModule, AuthModule, MailModule],
   providers: [UsersResolver, UsersService],
   exports: [UsersService]
 })

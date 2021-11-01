@@ -2722,6 +2722,1161 @@ async editProfile(userId: number, {email, password}: editProfileInputDTO): Promi
 
 
 
+-------------------------------- Section 6 -------------------------------------------------------------------------
+
+
+Now, we want to do email verification. We are going to understand database relationships.
+Also, we are going to create our email module, it will be a dynamic module as JWT. There is also a nest js community email module.
+
+Now create verification.entity.ts in entities in users.
+
+```
+import {Field, InputType, ObjectType} from "@nestjs/graphql";
+import {Entity} from "typeorm";
+import {CoreEntity} from "../../common/entities/core.entity";
+
+
+@InputType({isAbstract: true})
+@ObjectType()
+@Entity()
+export class Verification extends CoreEntity{
+    @Field(type => String)
+    code: string;
+    
+}
+```
+We have going to add 1 more field here as code (it is verification code)
+
+
+We are going to do 1 to 1 relationship.
+This means that our verification entity can only have 1 user, and a user can only have 1 verification.
+
+eg of 1 to many is a restaurant can have many dishes.
+
+Verification.entity.ts is going to have a class verification that extends CoreEntity.
+And in this class we are going to have 1 addition field code. Now this code will be used to verify the email.
+
+Now, while defining relationships we need to have a decorator @JoinColumn().
+Also we have to use @OneToOne() that is something like foreign key.
+JoinColumn() is required and it must be set on 1 side of relationship. (typeorm documentation).
+
+Eg- if I want to have a user and from the user I want to get the verifiction that the user had then I have to put @JoinColumn() on the User entity.
+If I want to get the verification and from the verification I want to access the user then I have to put @JoinColumn() on the verification entity.
+In our case we are going to access user from them verification side, So, we want joinColumn on the verification side.
+
+Like ---
+```
+import {Field, InputType, ObjectType} from "@nestjs/graphql";
+import {Entity, JoinColumn, OneToOne} from "typeorm";
+import {CoreEntity} from "../../common/entities/core.entity";
+
+
+@InputType({isAbstract: true})
+@ObjectType()
+@Entity()
+export class Verification extends CoreEntity{
+    @Field(type => String)
+    code: string;
+    
+    @OneToOne(type => User)
+    @JoinColumn()
+    user: User;
+}
+```
+Now, let's look at our DB and see the
+There is no new table in our DB, because we forgot to put verification in typeOrmModule in app.module
+
+Note:
+```
+@OneToOne(type => User)
+@JoinColumn()
+user: User;
+```
+This is going to create a foreign key in verification table as userId.
+If we would have done as...
+```
+@OneToOne(type => User)
+@JoinColumn()
+abcd: User;
+```
+then, we would have a foreign key as abcdId in verification table
+
+
+
+We are going to add 1 more field to our User.entity.ts as boolean -> emailVerified. and by default it will be false.
+```
+@Column({default: false})
+@Field(() => Boolean)
+emailVerified: boolean;
+```
+
+Now, we want that when our user create a account, we want to verify email (i.e we want to create verification).
+
+So, for this we need to inject a new repository Verification in users.
+So, add it in user module imports. (in TypeOrmModule.forFeature).
+
+Now add in users.service (inside constructor) as ---
+`@InjectRepository(Verification) private readonly verify: Repository<Verification>`
+
+Now, we have a verification repository on user.service
+Now, in user.service in the createAccount,
+after we save the user we are going to create a verifcation and saving the user in that verification.
+
+                        async CreateAccount({email, password, role}: CreateAccountInputDTO)
+                        : Promise<[boolean, string?]> {
+                            try {
+                                const exist = await this.users.findOne({email});
+                                if (exist){
+                                    // return error
+                                    return [false, 'there is a user with this email'];
+                                }
+                                const new_user = await this.users.create({email, password, role});
+                                const user = await this.users.save(new_user);
+                                await this.verify.save(this.verify.create({user,}));
+                                return [true];
+                            }
+                            catch(e){
+                                return [false, "Couldn't create account"]
+                            }
+                        }
+
+
+// NOTE - find the difference b/w user and new user in above code by console.log()
+new_user = it is made by create function. Create function returns the deep partial copy of the user.
+suer = it is made by the save function. save function returns the promise of the user.
+
+Now, we will get the error as we have not created "code": string for the verification. We are going to put code in verification.entity.ts
+
+So, in class verification,
+@BeforeInsert()
+createCode(): void {
+// this.code = "random code"; we can do it using uuid. other way is to convert math.random to string.
+// Math.random().toString(<number between 2 and 36 inclusive this is base>).substring(2)
+// if we want uuid we do `npm i uuid`. then import it as---
+`import {v4 as uuidv4} from 'uuid';`
+and use it as uuidv4();
+}
+
+So, our verification.entity.ts looks as...
+
+```
+import {Field, InputType, ObjectType} from "@nestjs/graphql";
+import {BeforeInsert, BeforeUpdate, Column, Entity, JoinColumn, OneToOne} from "typeorm";
+import {CoreEntity} from "../../common/entities/core.entity";
+import {User} from "./users.entity";
+import {v4 as uuidv4} from 'uuid';
+
+
+@InputType({isAbstract: true})
+@ObjectType()
+@Entity()
+export class Verification extends CoreEntity{
+
+    @Field(type => String)
+    @Column()
+    code: string;
+
+    @OneToOne(type => User)
+    @JoinColumn()
+    thisIsForeignKeyToUser: User;
+
+    @BeforeInsert()
+    createCode(): void {
+        this.code = uuidv4();
+    }
+}
+```
+
+And our create Account function in users.service looks as...
+```
+async createAccount({email, password, role}: CreateAccountInputDto): Promise<{ok:boolean, error?: string, message?: string}> {
+        try {
+            const exists = await this.user_repository.findOne({email});
+            if (exists){
+                return {ok: false, error: "user is already present"};
+            }
+            const new_user = this.user_repository.create({email, password, role});
+            const user = await this.user_repository.save(new_user);
+            const creatingVerification = await this.verification_repository.create({
+                thisIsForeignKeyToUser: user
+            });
+            await this.verification_repository.save(creatingVerification);
+
+            return {ok: true, message: "user created"};
+        }
+        catch(e){
+            return {ok: false, error: "Couldn't create account"};
+        }
+    }
+```
+
+Also, note that we have added isVerified in users.entity.ts as...
+```
+@Column({default: false})
+    @Field(type => Boolean)
+    @IsBoolean()
+    isVerified: boolean;
+```
+Also, don't forget that code is randomly generated everytime when we try to insert anything in the verification table.
+
+Note that, now when we createAccount, a row in with a random code is added in the verification table also.
+Now, we have to do the same thing in edit profile.
+await this.verify.save(this.verify.create({user}));  // verify is the instace of verification from constructor in users.service
+
+So, our edit profile looks as...
+```
+async editProfile(userId: number, {email, password}: EditProfileInputDto): Promise<User> {
+        const user = await this.user_repository.findOne(userId);
+        if (email){
+            user.email = email;
+            user.isVerified = false;
+            await this.verification_repository.save(this.verification_repository.create({thisIsForeignKeyToUser: user}));
+        }
+        if (password){
+            user.password = password;
+        }
+        return this.user_repository.save(user);
+    }
+```
+
+
+note that when we update email, we are updating isverified to false, also verification is created when email is updated.
+
+Now, we have a problem that we are not not deleting any verifications, that means we are not currently verifying the emails.
+This means 3 tasks..
+Find the verification by their verification code.
+Delete that verification
+And then make the user verified.
+
+
+Now, let's do this.
+Verification is very small thing that we are not going to create a new service for this, we are going to do this in users.module.
+If we wanted to we could create a new verification module. But it is so tightly coupled (and a small thing) with user that we are doing it in users module.
+So, go to user.resolvers and create a mutation as
+
+@Mutation(() => <output that we dont have yet.>)
+
+So, go to dtos in users and create a file verify-email.dtos.ts
+
+and make a class VerifyEmailOutputDTO extends CoreOutput{}
+and this is ObjectType()
+
+So, in resolver
+```
+@Mutation(() => VerifyEmailOutputDTO)
+verifyEmails() {
+}
+```
+We did this just to check that it is working correctly in graphQl playground docs.
+
+Now let's create inputs.
+Now create a `class VerifyEmailInputDTO extends PickType(Verification, ['code']) {}`
+and this is InputType()
+
+Now, in users.resolver we do as...
+```
+@Mutation(returns => VerifyEmailOutputDtos)
+verifyEmail(@Args('input') verifyEmailInputHere: VerifyEmailInputDtos) {
+ <going to update it after we create this in users.service.ts >
+}
+```
+
+So, we are going to verify as...
+```
+mutation {
+  verifyEmail(input: {
+    code: "c4c2337e-2886-4eec-83a4-6e5fa50d30c1"
+  }){
+    ok
+    error
+  }
+}
+```
+
+So, let's create a function verifyEmail in users.service as...
+`async verifyEmail(code: string): Promise<Boolean> {}`
+
+In this function we are going to do 4 things -
+1) we are going to look for verification.
+2) if it exists then we are going to delete it.
+3) then we are going to look for the user of that verification.
+4) And then we are going to update is verified as true for that user.
+
+So in users.service...
+```
+async verifyEmail({code}: VerifyEmailInputDtos): Promise<Boolean> {
+        const verification = await this.verification_repository.findOne({code});
+        if (verification){
+             console.log(verification, verification.thisIsForeignKeyToUser);
+        }
+        return false;
+    }
+```
+Here, we have tried to print verification, and foreign key in that row.
+So, the output is that we are getting verification but in the case of foreign key, we must have gotten the user.
+But we get `Undefined`.
+This is because TypeOrm does not load relationships, just because relationships is an expensive process for the DB. And sometime relationships can be many.
+So, to load the relationships we must explicitly tell typeOrm to load the relationships.
+So, if we use `const verification = await this.verification_repository.findOne({code}, {loadRelationIds: true});`, this is going to laod the Id only. i.e, foreign key only.
+If we want to load the whole object we relation property as..
+`const verification = await this.verification_repository.findOne({code}, {relations: ['thisIsForeignKeyToUser']});`
+This means we are saying to load the entity that is linked with this foreign key.
+So, now we don't have to print 'verification.user' as the whole relation comes with the 'verification'.
+
+So, in user.service we did as...
+```
+async verifyEmail({code}: VerifyEmailInputDtos): Promise<Boolean> {
+    try{
+        const verification = await this.verification_repository.findOne({code}, {relations: ['thisIsForeignKeyToUser']});
+        if (verification) {
+            verification.thisIsForeignKeyToUser.isVerified = true;
+            await this.user_repository.save(verification.thisIsForeignKeyToUser);
+            return true;
+
+        } else {
+            return false;
+        }
+        throw new Error();
+    }
+    catch (e){
+        console.log(e);
+        return false;
+    }
+}
+```
+Till now, we have updated the verfied in the users. But we didn't deleted the verification.
+Also, now, we have a problem, which we didn't notice, And that is that we have accidently updated the password hash in the user.
+So, what we have done is, that we have hashed the already made hash of the password. So, now our account is locked.
+This happened because, we have called save on the user.
+And save is basically update function.
+And we have put a @BeforeUpdate() in users.entity. This decorator is used with hashPassword() function.
+And this function takes the password from the user and then hashes it and then stores it in the DB.
+
+This problem is solved in 2 steps as
+1) we need to say that we do not want to select password when any function requires user data.
+```
+@Column({select: false})
+@Field(type => String)
+@IsString()
+password: string;
+```
+2) In the hashPassword we put a if condition that `if(password)` then only proceed with the function as...
+```
+@BeforeInsert()
+@BeforeUpdate()
+async hashPassword(): Promise<void> {
+    if(this.password) {
+        try {
+            this.password = await bcrypt.hash(this.password, 10);
+        } catch (e) {
+            console.log(e);
+            throw new InternalServerErrorException();
+        }
+    }
+}
+```
+So, this resolves this problem.
+Now, a new problem comes, that in the login function when we try to verify the password.
+And to verify we ask for the user from the DB, we do not get the password from the user.
+So, in login, password is not selected, so checkPassword in user.entity.ts does not get password.
+So, this.password in checkPassword is not defined.
+So, to resolve this, we have to specfically tell our findOne to load the password, as
+`await this.user_repository.findOne({email}, {select: ['password'] });`
+So, when we do this way, it is not going to bring the whole user object it is going to bring the password only.
+As, we are returning the userId in the token, we also need to bring the UserId from the DB, so, we do as...
+`await this.user_repository.findOne({email}, {select: ['id','password'] });`
+
+In our resolver, we did as...
+```
+@Mutation(returns => VerifyEmailOutputDtos)
+    async verifyEmail(@Args('input') verifyEmailInputHere: VerifyEmailInputDtos) {
+        try{
+            const ok = await this.userService.verifyEmail(verifyEmailInputHere);
+            if (ok){
+                return {
+                    ok,
+                    message: "email verified"
+                }
+            }
+            else{
+                return {
+                    ok,
+                    error: "email not verified"
+                }
+            }
+        }
+        catch (e){
+            return {
+                ok: false,
+                error: e
+            }
+        }
+    }
+```
+Now, let's delete the verification by adding `await this.verification_repository.delete(verification.id);` as...
+```
+async verifyEmail({code}: VerifyEmailInputDtos): Promise<Boolean> {
+        try{
+            const verification = await this.verification_repository.findOne({code}, {relations: ['thisIsForeignKeyToUser']});
+            if (verification) {
+                verification.thisIsForeignKeyToUser.isVerified = true;
+                await this.user_repository.save(verification.thisIsForeignKeyToUser);
+                await this.verification_repository.delete(verification.id);
+                return true;
+
+            } else {
+                return false;
+            }
+            throw new Error();
+        }
+        catch (e){
+            console.log(e);
+            return false;
+        }
+    }
+```
+
+
+
+The account that has been double hashed is locked,so delete the user from postico.
+We are unable to delete it as it says that there is a link in verification table. So, go the verification.entity.ts,
+and update as...
+```
+@OneToOne(type => User, {onDelete:"CASCADE"})
+    @JoinColumn()
+    thisIsForeignKeyToUser: User;
+```
+we have 5 options for OnDelete `OnDeleteType = "RESTRICT" | "CASCADE" | "SET NULL" | "DEFAULT" | "NO ACTION";`
+Now, we can delete the row.
+
+Now, let's test... create a new account, verify the account (notice the password hash in the user table), now login the user.
+
+
+
+
+# Right now, our code is little ugly, we have if blocks, try and catch block on resolvers and also (User.resolvers -> on mutation). This is wrong practice.
+# So, we are going to clean all our resolvers and service, and make it like user.resolver's functions are going to just return the user.service functions without having any other login on the resolvers.
+# Also our service are going to return the same output as our resolver's...
+
+eg - create account in resolvers...
+
+```
+@Mutation(returns => CreateAccountOutput)
+  async createAccount(
+    @Args('input') createAccountInput: CreateAccountInput,
+  ): Promise<CreateAccountOutput> {
+    return this.usersService.createAccount(createAccountInput);
+  }
+```
+
+create account in service...
+```
+async createAccount({
+    email,
+    password,
+    role,
+  }: CreateAccountInput): Promise<CreateAccountOutput> {
+    try {
+      const exists = await this.users.findOne({ email });
+      if (exists) {
+        return { ok: false, error: 'There is a user with that email already' };
+      }
+      const user = await this.users.save(
+        this.users.create({ email, password, role }),
+      );
+      await this.verifications.save(
+        this.verifications.create({
+          user,
+        }),
+      );
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: "Couldn't create account" };
+    }
+  }
+```
+
+
+So, our whole users.resolvers looks as...
+```
+import { UseGuards } from '@nestjs/common';
+import { Resolver, Query, Mutation, Args } from '@nestjs/graphql';
+import { AuthUser } from 'src/auth/auth-user.decorator';
+import { AuthGuard } from 'src/auth/auth.guard';
+import {
+  CreateAccountInput,
+  CreateAccountOutput,
+} from './dtos/create-account.dto';
+import { EditProfileInput, EditProfileOutput } from './dtos/edit-profile.dto';
+import { LoginInput, LoginOutput } from './dtos/login.dto';
+import { UserProfileInput, UserProfileOutput } from './dtos/user-profile.dto';
+import { VerifyEmailInput, VerifyEmailOutput } from './dtos/verify-email.dto';
+import { User } from './entities/user.entity';
+import { UserService } from './users.service';
+
+@Resolver(of => User)
+export class UserResolver {
+  constructor(private readonly usersService: UserService) {}
+
+  @Mutation(returns => CreateAccountOutput)
+  async createAccount(
+    @Args('input') createAccountInput: CreateAccountInput,
+  ): Promise<CreateAccountOutput> {
+    return this.usersService.createAccount(createAccountInput);
+  }
+
+  @Mutation(returns => LoginOutput)
+  async login(@Args('input') loginInput: LoginInput): Promise<LoginOutput> {
+    return this.usersService.login(loginInput);
+  }
+
+  @Query(returns => User)
+  @UseGuards(AuthGuard)
+  me(@AuthUser() authUser: User) {
+    return authUser;
+  }
+
+  @UseGuards(AuthGuard)
+  @Query(returns => UserProfileOutput)
+  async userProfile(
+    @Args() userProfileInput: UserProfileInput,
+  ): Promise<UserProfileOutput> {
+    return this.usersService.findById(userProfileInput.userId);
+  }
+
+  @UseGuards(AuthGuard)
+  @Mutation(returns => EditProfileOutput)
+  async editProfile(
+    @AuthUser() authUser: User,
+    @Args('input') editProfileInput: EditProfileInput,
+  ): Promise<EditProfileOutput> {
+    return this.usersService.editProfile(authUser.id, editProfileInput);
+  }
+
+  @Mutation(returns => VerifyEmailOutput)
+  verifyEmail(
+    @Args('input') { code }: VerifyEmailInput,
+  ): Promise<VerifyEmailOutput> {
+    return this.usersService.verifyEmail(code);
+  }
+}
+```
+
+And our whole users.service looks as...
+```
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import {
+  CreateAccountInput,
+  CreateAccountOutput,
+} from './dtos/create-account.dto';
+import { LoginInput, LoginOutput } from './dtos/login.dto';
+import { User } from './entities/user.entity';
+import { JwtService } from 'src/jwt/jwt.service';
+import { EditProfileInput, EditProfileOutput } from './dtos/edit-profile.dto';
+import { Verification } from './entities/verification.entity';
+import { VerifyEmailOutput } from './dtos/verify-email.dto';
+import { UserProfileOutput } from './dtos/user-profile.dto';
+
+@Injectable()
+export class UserService {
+  constructor(
+    @InjectRepository(User) private readonly users: Repository<User>,
+    @InjectRepository(Verification)
+    private readonly verifications: Repository<Verification>,
+    private readonly jwtService: JwtService,
+  ) {}
+
+  async createAccount({
+    email,
+    password,
+    role,
+  }: CreateAccountInput): Promise<CreateAccountOutput> {
+    try {
+      const exists = await this.users.findOne({ email });
+      if (exists) {
+        return { ok: false, error: 'There is a user with that email already' };
+      }
+      const user = await this.users.save(
+        this.users.create({ email, password, role }),
+      );
+      await this.verifications.save(
+        this.verifications.create({
+          user,
+        }),
+      );
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: "Couldn't create account" };
+    }
+  }
+
+  async login({ email, password }: LoginInput): Promise<LoginOutput> {
+    try {
+      const user = await this.users.findOne(
+        { email },
+        { select: ['password'] },
+      );
+      if (!user) {
+        return {
+          ok: false,
+          error: 'User not found',
+        };
+      }
+      const passwordCorrect = await user.checkPassword(password);
+      if (!passwordCorrect) {
+        return {
+          ok: false,
+          error: 'Wrong password',
+        };
+      }
+      const token = this.jwtService.sign(user.id);
+      return {
+        ok: true,
+        token,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error,
+      };
+    }
+  }
+
+  async findById(id: number): Promise<UserProfileOutput> {
+    try {
+      const user = await this.users.findOne({ id });
+      if (user) {
+        return {
+          ok: true,
+          user: user,
+        };
+      }
+    } catch (error) {
+      return { ok: false, error: 'User Not Found' };
+    }
+  }
+
+  async editProfile(
+    userId: number,
+    { email, password }: EditProfileInput,
+  ): Promise<EditProfileOutput> {
+    try {
+      const user = await this.users.findOne(userId);
+      if (email) {
+        user.email = email;
+        user.verified = false;
+        await this.verifications.save(this.verifications.create({ user }));
+      }
+      if (password) {
+        user.password = password;
+      }
+      await this.users.save(user);
+      return {
+        ok: true,
+      };
+    } catch (error) {
+      return { ok: false, error: 'Could not update profile.' };
+    }
+  }
+
+  async verifyEmail(code: string): Promise<VerifyEmailOutput> {
+    try {
+      const verification = await this.verifications.findOne(
+        { code },
+        { relations: ['user'] },
+      );
+      if (verification) {
+        verification.user.verified = true;
+        this.users.save(verification.user);
+        return { ok: true };
+      }
+      return { ok: false, error: 'Verification not found.' };
+    } catch (error) {
+      return { ok: false, error };
+    }
+  }
+}
+```
+We are not cleaning our code currently as everything already works and the target currently is learning.
+
+Note: `return this.usersService.verifyEmail(code)` and `const {ok, error} = await this.usersService.verifyEmail(code); return {ok,error}`
+These 2 statements are kind of same, our code will wait in both cases.
+But there is 1 difference, in the 1st case the calling function need not necessary be marked as async.
+But, in 2nd case, we are using await so, we must mark our calling function as async function.
+
+In our cleaned code, resolver is like a door man, it is just going to take the inputs and just guide it the correct door (function in service).
+
+
+
+Now, Let's get started with the sending email. We will have to create a email module. We are going to send emails via MailGun
+MailGun is the best service to send emails (send grid is another one, but it is not good. It is annoying).
+So, lets create a mailgun, Now: if we add our credit card, we will get 5000 emails, if we don't add credit card we will get 5 emails.
+So, go to mailgun.com (link it with github students pack).
+
+Now, We can use nestjs email module mailer (google nestjs email). This is made by the community.
+We are going to send 1 word email when we are going to send it via our made email module.
+If we want to send beautiful verification emails, (ie. we have send HTML and CSS in the email), then we can use mailer module.
+Also note, we send templates in the mailer.
+And we find templates online, creating templates is a headache as gmail, outlook and all others are different.
+There is no flexbox or things like these.
+Sometime images are shown, othertimes images are not shown. So, use premade templates.
+So, we are 1st going to do this with api emails (via mailgun) and send 1 word code in the email.
+And then, later we are going to go pro and send emails via mailer. (need to do it myself).
+
+
+So, lets create a module. `nest g mo mail`. It will look very similar to our jwt module.
+And we are going to make it a dynamic module. ie. will create a forRoot static method.
+
+So, copy forRoot function from JWTMODULE and paste it in mailModule.
+So, our mail module looks as...
+```
+import {DynamicModule, Module} from '@nestjs/common';
+import {JwtModuleOptions} from "../jwt/jwt.interfaces";
+import {CONFIG_OPTIONS} from "../jwt/jwt.constants";
+
+@Module({})
+export class MailModule {
+    static forRoot(options: JwtModuleOptions): DynamicModule {
+        return {
+            module: MailModule,
+            providers: [
+                {
+                    provide: CONFIG_OPTIONS,
+                    useValue: options
+                },
+                ],
+            exports: [],
+            imports: [],
+        };
+    }
+}
+```
+Also note that, we are using CONFIG_OPTIONS here also. So, let's move it from jwt constants to common constants.
+And then we can use it every where.
+
+So, it looks as...
+```
+import {DynamicModule, Module} from '@nestjs/common';
+import {JwtModuleOptions} from "../jwt/jwt.interfaces";
+import {CONFIG_OPTIONS} from "../common/common.constants";
+
+@Module({})
+export class MailModule {
+    static forRoot(options: MailModuleOptions): DynamicModule {
+        return {
+            module: MailModule,
+            providers: [
+                {
+                    provide: CONFIG_OPTIONS,
+                    useValue: options
+                },
+                ],
+            exports: [],
+            imports: [],
+        };
+    }
+}
+```
+We will create MailService a little later. 1st lets create interface. so create a file mail.interface.ts in mail folder.
+So, let's think what interface that mail Module must get.
+```
+curl -s --user 'api:YOUR_API_KEY' \
+	https://api.mailgun.net/v3/YOUR_DOMAIN_NAME/messages \
+	-F from='Excited User <mailgun@YOUR_DOMAIN_NAME>' \
+	-F to=YOU@YOUR_DOMAIN_NAME \
+	-F to=bar@example.com \
+	-F subject='Hello' \
+	-F text='Testing some Mailgun awesomeness!'
+```
+In the mailgun, we are having this command to send the email.
+Here, we need apikey, domain name and fromEMAIL (YOU@YOUR_DOMAIN_NAME)
+
+So, in mail.interface.ts we do as...
+```
+
+export interface MailModuleOptions {
+    apiKey: string;
+    domail: string;
+    fromEmail: string;
+}
+```
+Note, in MailModule, we also add MailModuleOptions in the type of options (in forRoot function params)
+
+So, now in appModule, lets add MailModule as
+```
+MailModule.forRoot({
+    apiKey: ,
+    domain: ,
+    fromEmail:
+})
+```
+So, add these 3 things in .env.dev file as...
+```
+MAILGUN_API_KEY=7949f175b9356737abe9200f55638e9e-10eedde5-c9946463
+MAILGUN_DOMAIN_NAME=sandboxb4d9bdf07caf46ccac25b7a771497d7a.mailgun.org
+MAILGUN_FROM_EMAIL=bhardwajshekhar10@gmail.com
+```
+Also, add these in config Module to validate with Joi.
+
+Now, let's create a mail service, that is going to send emails.
+And for this we are going to copy many things from jwtService as these 2 are going to be very very similar.
+So, let's create a file mail.service.ts as...
+```
+import {Inject, Injectable} from '@nestjs/common';
+import {CONFIG_OPTIONS} from "../common/common.constants";
+import {MailModuleOptions} from "./mail.interface";
+
+@Injectable()
+export class MailService {
+    constructor (@Inject(CONFIG_OPTIONS) private readonly options: MailModuleOptions) {
+        console.log(options);
+    }
+}
+```
+Now, in our MailModule, we have to add mailservice to provide and also to exports.
+So, our mail module looks as...
+```
+import {DynamicModule, Module} from '@nestjs/common';
+import {JwtModuleOptions} from "../jwt/jwt.interfaces";
+import {CONFIG_OPTIONS} from "../common/common.constants";
+import {MailModuleOptions} from "./mail.interface";
+import {MailService} from "./mail.service";
+
+@Module({})
+export class MailModule {
+    static forRoot(options: MailModuleOptions): DynamicModule {
+        return {
+            module: MailModule,
+            providers: [
+                {
+                    provide: CONFIG_OPTIONS,
+                    useValue: options
+                },
+                MailService
+                ],
+            exports: [MailService],
+        };
+    }
+}
+```
+
+When we run the code, we can see in output.
+```
+{
+  apiKey: '7949f175b9356737abe9200f55638e9e-10eedde5-c9946463',
+  domain: 'sandboxb4d9bdf07caf46ccac25b7a771497d7a.mailgun.org',
+  fromEmail: 'bhardwajshekhar10@gmail.com'
+}
+```
+So, it is working. ie. our mailservice is getting the options that we want.
+Now, we are going to create a function that is going to send emails. and we are going to use
+```
+curl -s --user 'api:YOUR_API_KEY' \
+	https://api.mailgun.net/v3/YOUR_DOMAIN_NAME/messages \
+	-F from='Excited User <mailgun@YOUR_DOMAIN_NAME>' \
+	-F to=YOU@YOUR_DOMAIN_NAME \
+	-F to=bar@example.com \
+	-F subject='Hello' \
+	-F text='Testing some Mailgun awesomeness!'
+```
+The F in the above command means form.
+
+So, lets make a function sendEmail as...
+We are not going to use curl (curl is used to run api on console), we are going to do this on nodejs.
+So, we will have to install a package. (request package was used earlier, now it is deprecated, it is not broken, it is not going to be updated now).
+So, now we are going to use GOT package. (google got node js). So, run `npm i got`
+
+
+```
+got(`https://api.mailgun.net/v3/${this.options.domain}/messages/`, {
+           headers: {
+               "Authorization":
+           } 
+        });
+```
+The authentication that is used is called as basic authentication.
+we are going to encode it in base64 (this is the rule of basic authentication).
+In basic authentication, the client sends HTTP requests with the Authorization header that contains the word Basic word followed by a space and a base64-encoded string username:password.
+
+
+Buffer.from('texthere').toString('base64')
+So, Buffer.from('api:YOUR_API_KEY').toString('base64')
+
+To handle the form (F), we are going to install form data.
+It is a library to create multipart/form-data streams using nodejs.
+So, run `npm i form-data`
+
+Now, import `import FormData from 'form-data';` in mailservice.
+Why form-data is used ?
+We are going to use form-data to create the body the api call.
+As in the below command, F (means form-data), we are going to add from, to, subject, and text in the form-data
+
+```
+curl -s --user 'api:YOUR_API_KEY' \
+	https://api.mailgun.net/v3/YOUR_DOMAIN_NAME/messages \
+	-F from='Excited User <mailgun@YOUR_DOMAIN_NAME>' \
+	-F to=YOU@YOUR_DOMAIN_NAME \
+	-F to=bar@example.com \
+	-F subject='Hello' \
+	-F text='Testing some Mailgun awesomeness!'
+```
+
+
+So, our mailservice looks as...
+```
+import {Inject, Injectable} from '@nestjs/common';
+import {CONFIG_OPTIONS} from "../common/common.constants";
+import {MailModuleOptions} from "./mail.interface";
+import got from "got";
+import FormData from 'form-data';
+
+@Injectable()
+export class MailService {
+    constructor (@Inject(CONFIG_OPTIONS) private readonly options: MailModuleOptions) {
+        this.sendEmail('testing', 'test', 'sbh7435@gmail.com');
+    }
+    private sendEmail(subject: string, content: string, toEmail: string) {
+        const form = new FormData();
+        form.append("from",`Excited User <mailgun@${this.options.domain}>`);
+        form.append("to",toEmail);
+        form.append("subject",subject);
+        form.append("text",content);
+
+        got(`https://api.mailgun.net/v3/${this.options.domain}/messages/`, {
+           method: 'POST',
+           headers: {
+               "Authorization": `Basic ${Buffer.from(`api: ${this.options.apiKey}`).toString('base64')}`,
+           },
+            body: form,
+
+        });
+    }
+}
+```
+After running `npm run start:dev` we get error as...
+`TypeError: form_data_1.default is not a constructor`.
+As we have called FormData in the same way as it is shown on form-data documentation.
+This must mean that our import is not working correctly.
+So, import form data as per node js. So, do as `import * as FormData from 'form-data';`.
+So, now let's get the response of the api call as..
+```
+import {Inject, Injectable} from '@nestjs/common';
+import {CONFIG_OPTIONS} from "../common/common.constants";
+import {MailModuleOptions} from "./mail.interface";
+import got from "got";
+import * as FormData from 'form-data';
+
+@Injectable()
+export class MailService {
+    constructor (@Inject(CONFIG_OPTIONS) private readonly options: MailModuleOptions) {
+        this.sendEmail('testing', 'test', 'sbh7435@gmail.com');
+    }
+
+    private async sendEmail(subject: string, content: string, toEmail: string) {
+        const form = new FormData();
+        form.append('from',`Excited User <mailgun@${this.options.domain}>`);
+        form.append('to','sbh7435@gmail.com');
+        form.append('subject',subject);
+        form.append('text',content);
+
+
+        // mere vala
+        const response = await got(`https://api.mailgun.net/v3/${this.options.domain}/messages`, {
+           method: 'POST',
+           headers: {
+               Authorization: `Basic ${Buffer.from(
+                   `api:${this.options.apiKey}`
+               ).toString('base64')}`,
+           },
+            body: form,
+        });
+        console.log(response.body);
+    }
+}
+```
+We just saved the got result in response, and printed its body.
+Note: response body must look like...
+```
+{
+  "id": "<20211101160711.1.B336357FE195F837@sandboxb4d9bdf07caf46ccac25b7a771497d7a.mailgun.org>",
+  "message": "Queued. Thank you."
+}
+```
+if it is not giving this message then there must be some error.
+While doing this, I found that the error comes if in
+`const response = await got('https://api.mailgun.net/v3/${this.options.domain}/messages'` after messages we put `/` as...
+`const response = await got('https://api.mailgun.net/v3/${this.options.domain}/messages/'` -> this is the mistake that I was doing
+Note: we made this function as async and using await in front of got api call.
+Currently, we are just going to send 1 code in the text body.
+
+Now, we earlier said that to send beautiful emails we use nestjs mailer.
+This is not a complete truth. We can also use mailgun templates.
+There we have some templetes like forgotPassword template. All autogenerated mails of nomadcoders are from mailgun template.
+
+now, we are going to send beautiful templates.
+So, go to sending>templates in the mailgun. So, click on crete template. We can see different templates here.
+We are going to choose alert template and edit it.
+Also note, that these templates(in mailgun) supports handle bars.
+So, we can send data in the templates and we can use that data as {{data_param}}
+hence, `Hi {{username}} Please confirm your email.` And this data must be passed in the form (from form-data).
+
+Note: we are passing 2 params here. One is username and the other is code.
+We are using code in the href link of the button. So, the link looks as ` href="http://127.0.0.1:3000/confirm?code={{code}}" `
+This is the address of the api where we are going to pass the code.
+
+Now if we see the the sending section on mailgun documentation. We see that we can pass send the template also.
+So, instead of content (in the form.append), we are going to do as `form.append('template', 'name_of_the_template')`
+And we send variables as `form.append('v:username', 'this is the username');`
+
+So, our mail service looks as...
+```
+export class MailService {
+    constructor (@Inject(CONFIG_OPTIONS) private readonly options: MailModuleOptions) {
+        this.sendEmail('testing', 'sbh7435@gmail.com');
+    }
+
+    private async sendEmail(subject: string, toEmail: string) {
+        const form = new FormData();
+        form.append('from',`Excited User <mailgun@${this.options.domain}>`);
+        form.append('to','sbh7435@gmail.com');
+        form.append('subject',subject);
+        form.append('template','confirm_email_template');
+        form.append('v:username', 'this is the username');
+        form.append('v:code', "this is the code");
+
+
+        const response = await got(`https://api.mailgun.net/v3/${this.options.domain}/messages`, {
+           method: 'POST',
+           headers: {
+               Authorization: `Basic ${Buffer.from(
+                   `api:${this.options.apiKey}`
+               ).toString('base64')}`,
+           },
+            body: form,
+        });
+        console.log(response.body);
+    }
+}
+```
+We have not linked username and code here, as to do this we have to link our DB.
+So, currently, it is going to send username as `this is the username` and code as `this is the code`
+So, now we are going to link DB and add templatename in our function params and variable should come in the form of array in the function.
+So, for variables go to mail.interface.ts and do as...
+```
+
+export interface MailModuleOptions {
+    apiKey: string;
+    domain: string;
+    fromEmail: string;
+}
+
+export interface EmailVariables {
+    key: string;
+    value: string;
+}
+```
+Now we are going to send the variables in the form of array of key-value pairs.
+So, our email service looks as...
+```
+import {Inject, Injectable} from '@nestjs/common';
+import {CONFIG_OPTIONS} from "../common/common.constants";
+import {EmailVariables, MailModuleOptions} from "./mail.interface";
+import got from "got";
+import * as FormData from 'form-data';
+
+@Injectable()
+export class MailService {
+    constructor (@Inject(CONFIG_OPTIONS) private readonly options: MailModuleOptions) {}
+
+    private async sendEmail(subject: string, toEmail: string, template: string, EmailVars: EmailVariables[]) {
+        const form = new FormData();
+        form.append('from',`shekhar from uberEats <mailgun@${this.options.domain}>`);
+        form.append('to','sbh7435@gmail.com');
+        form.append('subject',subject);
+        form.append('template',template);
+        EmailVars.forEach(eVar => form.append(eVar.key, eVar.value));
+
+        const response = await got(`https://api.mailgun.net/v3/${this.options.domain}/messages`, {
+           method: 'POST',
+           headers: {
+               Authorization: `Basic ${Buffer.from(
+                   `api:${this.options.apiKey}`
+               ).toString('base64')}`,
+           },
+            body: form,
+        });
+        console.log(response.body);
+    }
+
+    sendVerificationEmail(email: string, code: string) {
+        this.sendEmail("Verify your Email", email, "confirm_email_template", [{key: "code", value: code},
+            {key: 'username', value: email}]);
+    }
+}
+```
+Now we are going to connect it (mail service) to user.service.
+So, inject mail service in users constructor. Note MailModule is made global.
+Now, in create account, we update as...
+```
+async createAccount({email, password, role}: CreateAccountInputDto): Promise<{ok:boolean, error?: string, message?: string}> {
+        try {
+            const exists = await this.user_repository.findOne({email});
+            if (exists){
+                return {ok: false, error: "user is already present"};
+            }
+            const new_user = this.user_repository.create({email, password, role});
+            const user = await this.user_repository.save(new_user);
+            const creatingVerification = await this.verification_repository.create({
+                thisIsForeignKeyToUser: user
+            });
+            const verify = await this.verification_repository.save(creatingVerification);
+            await this.mailService_here.sendVerificationEmail(user.email, verify.code);
+            return {ok: true, message: "user created"};
+        }
+        catch(e){
+            return {ok: false, error: "Couldn't create account"};
+        }
+    }
+```
+Now, we are using our send verification email. Now, we can do the same thing in the edit profile method also.
+Also, we are going to update send mail function in such a way that client do not have to wait for any thing.
+Eg- we mail is unsuccessful, then it is not going to wait on client (currently it does wait because we are saving the result in a variable and then logging it).
+We should just log it in the errors.
+
+So, our sendEmail looks as...
+```
+private async sendEmail(subject: string, toEmail: string, template: string, EmailVars: EmailVariables[]) {
+        const form = new FormData();
+        form.append('from',`shekhar from uberEats <mailgun@${this.options.domain}>`);
+        form.append('to','sbh7435@gmail.com');
+        form.append('subject',subject);
+        form.append('template',template);
+        EmailVars.forEach(eVar => form.append(`v:${eVar.key}`, eVar.value));
+
+        try {
+            await got(`https://api.mailgun.net/v3/${this.options.domain}/messages`, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Basic ${Buffer.from(
+                        `api:${this.options.apiKey}`
+                    ).toString('base64')}`,
+                },
+                body: form,
+            });
+        } catch (error){
+            console.log(error);
+        }
+    }
+   
+```
+Note: try block is placed on the got api call.
+let's test the feature, by editing the email to 'sbh7435@gmail.com', because we have verified this email to receive emails from mailgun.
+We get verification mail like `http://127.0.0.1:3000/confirm?code=accf4818-6c82-4ce2-a8e9-ad14487b5a01`
+
+Now, this thing works. In future we are going to have a React function which is going to verify this email.
+So, when we will open this link, the api will confirm the user and make it verified.
 
 
 
